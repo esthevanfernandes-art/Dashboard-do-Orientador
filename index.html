@@ -61,9 +61,12 @@
     .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; }
     .form-group textarea { resize: vertical; min-height: 80px; }
     .empty-state { text-align: center; padding: 32px; color: #94a3b8; font-size: 14px; }
+    .loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.7); z-index: 200; justify-content: center; align-items: center; font-weight: 600; color: #003366; }
   </style>
 </head>
 <body>
+
+  <div class="loading-overlay" id="loading">⌛ Carregando dados da nuvem...</div>
 
   <div class="header">
     <div class="header-brand">
@@ -80,6 +83,7 @@
       <h1>Dashboard de Acompanhamento</h1>
     </div>
     <div>
+      <button class="btn btn-secondary" onclick="loadDashboard()">🔄 Atualizar Dados</button>
       <button class="btn btn-excel" onclick="exportToExcel()">📊 Exportar Excel</button>
       <button class="btn" onclick="openModal()">+ Novo Acompanhamento</button>
     </div>
@@ -151,7 +155,6 @@
           <th>Acompanhado?</th>
           <th>Data</th>
           <th>Relato</th>
-          <th>Ações</th>
         </tr>
       </thead>
       <tbody id="tableBody"></tbody>
@@ -168,7 +171,6 @@
     <div class="modal-content">
       <h2 id="modalTitle" style="margin-bottom: 16px;">Novo Acompanhamento</h2>
       <form id="addForm" onsubmit="saveRecord(event)">
-        <input type="hidden" id="editId" value="">
         <div class="form-group"><label>Código</label><input type="text" id="inputCodigo" required></div>
         <div class="form-group"><label>Nome Completo do Aprendiz</label><input type="text" id="inputNome" required></div>
         <div class="form-group"><label>E-mail do Aprendiz</label><input type="email" id="inputEmail" placeholder="aprendiz@email.com"></div>
@@ -223,92 +225,35 @@
         <div class="form-group"><label>Breve Relato do Acompanhamento</label><textarea id="inputRelato" placeholder="Descreva aqui o resumo do atendimento..."></textarea></div>
         <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-          <button type="submit" class="btn">Salvar</button>
+          <button type="submit" class="btn" id="btnSubmit">Salvar na Nuvem</button>
         </div>
       </form>
     </div>
   </div>
 
   <script>
-    const DB_NAME = 'CIEE_Dashboard_DB';
-    const DB_VERSION = 1;
-    const STORE_NAME = 'acompanhamentos';
-    let db;
+    const API_URL = "https://script.google.com/a/macros/ciee.org.br/s/AKfycbwbUB8mx6ICu1aFbX590P--UJlGG2kU4VbErk4JANSJy2j5aBaYZXlK38OR21FUr_Wnjg/exec";
 
     let statusChart, empresaChart, estadoChart, mesesChart;
     let currentPage = 1;
     const pageSize = 50;
+    let rawList = [];
     let filteredList = [];
 
-    function openDB() {
-      return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        request.onupgradeneeded = (e) => {
-          const dbRef = e.target.result;
-          if (!dbRef.objectStoreNames.contains(STORE_NAME)) {
-            dbRef.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-          }
-        };
-        request.onsuccess = (e) => {
-          db = e.target.result;
-          resolve(db);
-        };
-        request.onerror = (e) => reject(e);
-      });
-    }
-
-    async function migrateLegacyData() {
-      const legacyData = localStorage.getItem('dashboard_jovens_data');
-      if (legacyData) {
-        try {
-          const parsed = JSON.parse(legacyData);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            for (const item of parsed) {
-              delete item.id;
-              await addOrUpdateRecord(item);
-            }
-          }
-          localStorage.removeItem('dashboard_jovens_data');
-        } catch (err) {
-          console.error("Erro na migração:", err);
-        }
-      }
+    function showLoading(show) {
+      document.getElementById('loading').style.display = show ? 'flex' : 'none';
     }
 
     function formatDate(dateString) {
       if (!dateString) return '-';
-      const parts = dateString.split('-');
+      if (typeof dateString === 'string' && dateString.includes('T')) {
+        dateString = dateString.split('T')[0];
+      }
+      const parts = String(dateString).split('-');
       if (parts.length === 3) {
         return `${parts[2]}/${parts[1]}/${parts[0]}`;
       }
       return dateString;
-    }
-
-    function getAllRecords() {
-      return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.getAll();
-        req.onsuccess = () => resolve(req.result || []);
-      });
-    }
-
-    function addOrUpdateRecord(record) {
-      return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.put(record);
-        req.onsuccess = () => resolve(req.result);
-      });
-    }
-
-    function deleteRecordFromDB(id) {
-      return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        const req = store.delete(id);
-        req.onsuccess = () => resolve();
-      });
     }
 
     function initCharts() {
@@ -333,15 +278,10 @@
             legend: {
               display: true,
               position: 'top',
-              labels: {
-                font: { family: "'Inter', sans-serif", size: 13, weight: '500' },
-                color: '#334155'
-              }
+              labels: { font: { family: "'Inter', sans-serif", size: 13, weight: '500' }, color: '#334155' }
             }
           },
-          scales: {
-            y: { beginAtZero: true, ticks: { stepSize: 1 } }
-          }
+          scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
         }
       });
 
@@ -367,13 +307,45 @@
       });
     }
 
+    async function fetchFromCloud() {
+      showLoading(true);
+      try {
+        const response = await fetch(API_URL);
+        const data = await response.json();
+        
+        rawList = data.map(item => ({
+          codigo: item["Código"] || item.codigo || "",
+          nome: item["Nome Completo do Aprendiz"] || item.nome || "",
+          email: item["E-mail do Aprendiz"] || item.email || "",
+          turma: item["Número da Turma"] || item.turma || "",
+          diaSemana: item["Dia da Semana"] || item.diaSemana || "",
+          turno: item["Turno de Atendimento"] || item.turno || "",
+          ticket: item["Número do Ticket ou Link"] || item.ticket || "",
+          lider: item["Líder Técnico"] || item.lider || "",
+          instrutor: item["Instrutor Responsável"] || item.instrutor || "",
+          empresa: item["Empresa"] || item.empresa || "",
+          estado: item["Estado (UF)"] || item.estado || "",
+          status: item["Acompanhamento Realizado?"] || item.status || "Não",
+          data: item["Data do Acompanhamento"] || item.data || "",
+          relato: item["Breve Relato do Acompanhamento"] || item.relato || ""
+        }));
+      } catch (err) {
+        console.error("Erro ao carregar dados da nuvem:", err);
+        alert("Não foi possível conectar com a planilha online. Verifique a permissão do Apps Script.");
+      } finally {
+        showLoading(false);
+      }
+    }
+
     async function loadDashboard() {
-      const allData = await getAllRecords();
+      if (rawList.length === 0) {
+        await fetchFromCloud();
+      }
       
       const search = document.getElementById('searchInput').value.toLowerCase();
       const statusFilter = document.getElementById('statusFilter').value;
 
-      filteredList = allData.filter(item => {
+      filteredList = rawList.filter(item => {
         const matchesSearch = (item.nome || '').toLowerCase().includes(search) ||
                               (item.email || '').toLowerCase().includes(search) ||
                               (item.turma || '').toLowerCase().includes(search) ||
@@ -385,15 +357,15 @@
         return matchesSearch && matchesStatus;
       });
 
-      updateKPIs(allData);
-      updateCharts(allData);
+      updateKPIs(rawList);
+      updateCharts(rawList);
       renderTablePage();
     }
 
-    function updateKPIs(allData) {
-      const total = allData.length;
-      const realizados = allData.filter(d => d.status === 'Sim').length;
-      const pendentes = allData.filter(d => d.status === 'Não').length;
+    function updateKPIs(data) {
+      const total = data.length;
+      const realizados = data.filter(d => String(d.status).trim() === 'Sim').length;
+      const pendentes = total - realizados;
       const taxa = total > 0 ? Math.round((realizados / total) * 100) : 0;
 
       document.getElementById('kpi-total').innerText = total.toLocaleString('pt-BR');
@@ -402,18 +374,21 @@
       document.getElementById('kpi-taxa').innerText = `${taxa}%`;
     }
 
-    function updateCharts(allData) {
+    function updateCharts(data) {
       const mesesNomes = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
       const mesesContagem = {};
 
-      allData.forEach(d => {
+      data.forEach(d => {
         if (d.data) {
-          const parts = d.data.split('-');
+          const strData = String(d.data);
+          const parts = strData.includes('T') ? strData.split('T')[0].split('-') : strData.split('-');
           if (parts.length === 3) {
             const ano = parts[0];
             const mesIdx = parseInt(parts[1]) - 1;
-            const chave = `${mesesNomes[mesIdx]}/${ano.slice(2)}`;
-            mesesContagem[chave] = (mesesContagem[chave] || 0) + 1;
+            if (!isNaN(mesIdx) && mesIdx >= 0 && mesIdx < 12) {
+              const chave = `${mesesNomes[mesIdx]}/${ano.slice(-2)}`;
+              mesesContagem[chave] = (mesesContagem[chave] || 0) + 1;
+            }
           }
         }
       });
@@ -422,20 +397,20 @@
       mesesChart.data.datasets[0].data = Object.values(mesesContagem);
       mesesChart.update();
 
-      const realizados = allData.filter(d => d.status === 'Sim').length;
-      const pendentes = allData.filter(d => d.status === 'Não').length;
+      const realizados = data.filter(d => String(d.status).trim() === 'Sim').length;
+      const pendentes = data.length - realizados;
       statusChart.data.datasets[0].data = [realizados, pendentes];
       statusChart.update();
 
       const empresas = {};
-      allData.forEach(d => { if(d.empresa) empresas[d.empresa] = (empresas[d.empresa] || 0) + 1; });
+      data.forEach(d => { if(d.empresa) empresas[d.empresa] = (empresas[d.empresa] || 0) + 1; });
       const sortedEmpresas = Object.entries(empresas).sort((a, b) => b[1] - a[1]).slice(0, 5);
       empresaChart.data.labels = sortedEmpresas.map(item => item[0]);
       empresaChart.data.datasets[0].data = sortedEmpresas.map(item => item[1]);
       empresaChart.update();
 
       const estados = {};
-      allData.forEach(d => { if(d.estado) estados[d.estado] = (estados[d.estado] || 0) + 1; });
+      data.forEach(d => { if(d.estado) estados[d.estado] = (estados[d.estado] || 0) + 1; });
       const sortedEstados = Object.entries(estados).sort((a, b) => b[1] - a[1]).slice(0, 5);
       estadoChart.data.labels = sortedEstados.map(item => item[0]);
       estadoChart.data.datasets[0].data = sortedEstados.map(item => item[1]);
@@ -444,10 +419,11 @@
 
     function formatTicketHtml(ticket) {
       if (!ticket) return '-';
-      if (ticket.startsWith('http://') || ticket.startsWith('https://')) {
-        return `<a href="${ticket}" target="_blank" class="btn-ticket">🔗 Abrir Ticket</a>`;
+      const str = String(ticket);
+      if (str.startsWith('http://') || str.startsWith('https://')) {
+        return `<a href="${str}" target="_blank" class="btn-ticket">🔗 Abrir Ticket</a>`;
       }
-      return `<strong>${ticket}</strong>`;
+      return `<strong>${str}</strong>`;
     }
 
     function renderTablePage() {
@@ -463,11 +439,11 @@
       tbody.innerHTML = '';
 
       if (pageData.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="15" class="empty-state">Nenhum registro encontrado. Clique em "+ Novo Acompanhamento" para adicionar.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14" class="empty-state">Nenhum registro encontrado. Clique em "+ Novo Acompanhamento" para adicionar.</td></tr>`;
       } else {
         pageData.forEach((item) => {
           const tr = document.createElement('tr');
-          const isSim = item.status === 'Sim';
+          const isSim = String(item.status).trim() === 'Sim';
           tr.innerHTML = `
             <td>${item.codigo || '-'}</td>
             <td><strong>${item.nome || '-'}</strong></td>
@@ -482,11 +458,7 @@
             <td><strong>${item.estado || '-'}</strong></td>
             <td><span class="badge ${isSim ? 'badge-sim' : 'badge-nao'}">${isSim ? 'Sim' : 'Não'}</span></td>
             <td>${formatDate(item.data)}</td>
-            <td>${item.relato ? `<button class="btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="alert('Relato: ${item.relato.replace(/'/g, "\\'")}')">👁️ Ver relato</button>` : '-'}</td>
-            <td>
-              <button class="btn-edit" onclick="editRecord(${item.id})">Editar</button>
-              <button class="btn-delete" onclick="deleteRecord(${item.id})">Excluir</button>
-            </td>
+            <td>${item.relato ? `<button class="btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="alert('Relato: ${String(item.relato).replace(/'/g, "\\'")}')">👁️ Ver relato</button>` : '-'}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -509,7 +481,6 @@
 
     function openModal() {
       document.getElementById('modalTitle').innerText = 'Novo Acompanhamento';
-      document.getElementById('editId').value = '';
       document.getElementById('addForm').reset();
       document.getElementById('modalForm').style.display = 'flex';
     }
@@ -518,40 +489,8 @@
       document.getElementById('modalForm').style.display = 'none';
     }
 
-    async function editRecord(id) {
-      const allData = await getAllRecords();
-      const item = allData.find(d => d.id === id);
-      if (!item) return;
-
-      document.getElementById('modalTitle').innerText = 'Editar Acompanhamento';
-      document.getElementById('editId').value = item.id;
-      document.getElementById('inputCodigo').value = item.codigo || '';
-      document.getElementById('inputNome').value = item.nome || '';
-      document.getElementById('inputEmail').value = item.email || '';
-      document.getElementById('inputTurma').value = item.turma || '';
-      document.getElementById('inputDiaSemana').value = item.diaSemana || '';
-      document.getElementById('inputTurno').value = item.turno || '';
-      document.getElementById('inputTicket').value = item.ticket || '';
-      document.getElementById('inputLider').value = item.lider || '';
-      document.getElementById('inputInstrutor').value = item.instrutor || '';
-      document.getElementById('inputEmpresa').value = item.empresa || '';
-      document.getElementById('inputEstado').value = item.estado || '';
-      document.getElementById('inputStatus').value = item.status || 'Não';
-      document.getElementById('inputData').value = item.data || '';
-      document.getElementById('inputRelato').value = item.relato || '';
-      document.getElementById('modalForm').style.display = 'flex';
-    }
-
-    async function deleteRecord(id) {
-      if (confirm('Tem certeza que deseja excluir este registro?')) {
-        await deleteRecordFromDB(id);
-        loadDashboard();
-      }
-    }
-
     async function saveRecord(e) {
       e.preventDefault();
-      const editId = document.getElementById('editId').value;
       
       const record = {
         codigo: document.getElementById('inputCodigo').value,
@@ -570,23 +509,35 @@
         relato: document.getElementById('inputRelato').value
       };
 
-      if (editId) {
-        record.id = parseInt(editId);
-      }
-
-      await addOrUpdateRecord(record);
+      showLoading(true);
       closeModal();
-      loadDashboard();
+
+      try {
+        await fetch(API_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(record)
+        });
+
+        alert('Registro enviado com sucesso para a planilha na nuvem!');
+        rawList = [];
+        await loadDashboard();
+      } catch (err) {
+        alert('Ocorreu um erro ao salvar na nuvem.');
+        console.error(err);
+      } finally {
+        showLoading(false);
+      }
     }
 
-    async function exportToExcel() {
-      const allData = await getAllRecords();
-      if (allData.length === 0) {
+    function exportToExcel() {
+      if (rawList.length === 0) {
         alert('Não existem dados para exportar!');
         return;
       }
 
-      const excelData = allData.map(item => ({
+      const excelData = rawList.map(item => ({
         'Código': item.codigo || '-',
         'Aprendiz': item.nome || '-',
         'E-mail': item.email || '-',
@@ -610,10 +561,8 @@
     }
 
     window.onload = async () => {
-      await openDB();
-      await migrateLegacyData();
       initCharts();
-      loadDashboard();
+      await loadDashboard();
     };
   </script>
 </body>
