@@ -158,7 +158,7 @@
   </div>
 
   <script>
-    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ1d8G1KGtIdSHT7nEBpM4xjBtnezPXidc2wpnDP-Lr5cc2dn-BoO-kbsIM3AJbwjkWYnbR9YeqFIbT/pub?output=csv";
+    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQiuwhi4HZGfj0uS3bI98IOrDnfL0sql0lhQmmwY5WPgfDX16mlRvj7-QH0U9gzTrfC1WKPpGofQbDJ/pub?gid=0&single=true&output=csv";
 
     let statusChart, empresaChart, estadoChart, mesesChart;
     let currentPage = 1;
@@ -346,57 +346,4 @@
       } else {
         pageData.forEach((item) => {
           const tr = document.createElement('tr');
-          const isSim = String(item.status).toLowerCase() === 'sim';
-          tr.innerHTML = `
-            <td>${item.codigo || '-'}</td>
-            <td><strong>${item.nome || '-'}</strong></td>
-            <td>${item.email || '-'}</td>
-            <td>${item.turma || '-'}</td>
-            <td>${item.diaSemana || '-'}</td>
-            <td>${item.turno || '-'}</td>
-            <td>${formatTicketHtml(item.ticket)}</td>
-            <td>${item.lider || '-'}</td>
-            <td>${item.instrutor || '-'}</td>
-            <td>${item.empresa || '-'}</td>
-            <td><strong>${item.estado || '-'}</strong></td>
-            <td><span class="badge ${isSim ? 'badge-sim' : 'badge-nao'}">${isSim ? 'Sim' : 'Não'}</span></td>
-            <td>${formatDate(item.data)}</td>
-            <td>${item.relato ? `<button class="btn-secondary" style="padding: 2px 8px; font-size: 11px;" onclick="alert('Relato: ${String(item.relato).replace(/'/g, "\\'")}')">👁️ Ver relato</button>` : '-'}</td>
-          `;
-          tbody.appendChild(tr);
-        });
-      }
-
-      document.getElementById('pageInfo').innerText = `Página ${currentPage} de ${totalPages} (${filteredList.length.toLocaleString('pt-BR')} registros)`;
-      document.getElementById('btnPrev').disabled = currentPage === 1;
-      document.getElementById('btnNext').disabled = currentPage === totalPages;
-    }
-
-    function changePage(direction) {
-      currentPage += direction;
-      renderTablePage();
-    }
-
-    function onSearch() {
-      currentPage = 1;
-      loadDashboard();
-    }
-
-    function exportToExcel() {
-      if (rawList.length === 0) {
-        alert('Não existem dados para exportar!');
-        return;
-      }
-      const worksheet = XLSX.utils.json_to_sheet(rawList);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Acompanhamentos");
-      XLSX.writeFile(workbook, "Acompanhamento_Jovens_CIEE.xlsx");
-    }
-
-    window.onload = () => {
-      initCharts();
-      fetchSheetData();
-    };
-  </script>
-</body>
-</html>
+          const isSim = String
